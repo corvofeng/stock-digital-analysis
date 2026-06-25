@@ -1219,6 +1219,11 @@ def write_stock_datadir_dashboard_html(
         ".sidebar{position:sticky;top:16px;align-self:start;max-height:calc(100vh - 32px);overflow:auto;background:white;border:1px solid #d9e2ec;border-radius:8px;padding:14px;}",
         ".content{min-width:0;} h1{font-size:26px;margin:0 0 8px;} h2{font-size:20px;margin:0;}",
         ".meta{color:#52606d;margin-bottom:20px;} .panel{background:white;border:1px solid #d9e2ec;border-radius:8px;padding:16px;margin-bottom:24px;}",
+        ".explain{background:#fbfcfd;border:1px solid #d9e2ec;border-radius:8px;padding:14px 16px;margin:0 0 18px;}",
+        ".explain h2,.explain h3{margin:0 0 10px;font-size:17px;} .explain h3{font-size:15px;}",
+        ".explain-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;}",
+        ".explain-item{border-left:3px solid #627d98;padding-left:10px;} .explain-item strong{display:block;margin-bottom:4px;}",
+        ".explain-item p{margin:0;color:#52606d;font-size:13px;line-height:1.55;}",
         ".toc-title{font-weight:700;margin-bottom:10px;} .toc{display:flex;flex-direction:column;gap:6px;font-size:13px;}",
         ".toc a{color:#334e68;text-decoration:none;line-height:1.35;} .toc a:hover{text-decoration:underline;}",
         "details.symbol{background:white;border:1px solid #d9e2ec;border-radius:8px;margin-bottom:14px;overflow:hidden;}",
@@ -1259,7 +1264,8 @@ def write_stock_datadir_dashboard_html(
             '<main class="content">',
         "<h1>股票数字分布异常检测报告</h1>",
         f"<div class=\"meta\">data_dir: {escape(str(data_dir))}</div>",
-            '<div id="overview" class="panel">',
+        '<div id="overview" class="panel">',
+        _overview_explanation_html(),
         pio.to_html(
             create_stock_scan_dashboard(ranking),
             include_plotlyjs="cdn",
@@ -1289,6 +1295,7 @@ def write_stock_datadir_dashboard_html(
                     f'<span class="symbol-meta">score {escape(score)} · n {escape(samples)}</span>',
                     "</summary>",
                     '<div class="symbol-body">',
+                    _symbol_explanation_html(),
                     pio.to_html(
                         create_symbol_dashboard(
                             report,
@@ -1307,6 +1314,34 @@ def write_stock_datadir_dashboard_html(
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(parts), encoding="utf-8")
     return output
+
+
+def _overview_explanation_html() -> str:
+    return """
+<section class="explain">
+<h2>统计说明</h2>
+<div class="explain-grid">
+<div class="explain-item"><strong>异常综合分数</strong><p>对核心指标在全部股票中的横向差异做标准化，计算各指标 z-score 的绝对值均值。分数越高，表示该股票的数字分布越偏离同批股票。</p></div>
+<div class="explain-item"><strong>核心指标明细表</strong><p>展示样本数、Benford 偏离、价格尾数集中度、整数价位聚集度和尾盘偏移等字段，便于客户定位异常来源。</p></div>
+<div class="explain-item"><strong>样本数</strong><p>当前筛选条件下参与统计的 60 秒 bar 数。样本越少，指标波动通常越大，解读时应更谨慎。</p></div>
+</div>
+</section>
+""".strip()
+
+
+def _symbol_explanation_html() -> str:
+    return """
+<section class="explain">
+<h3>本股票指标说明</h3>
+<div class="explain-grid">
+<div class="explain-item"><strong>成交额/成交量首位数字</strong><p>统计成交额和成交量的第一位有效数字，并与 Benford 理论分布 log10(1 + 1 / d) 对比；MAD、KS、chi-square 越高，说明首位数字越不自然。</p></div>
+<div class="explain-item"><strong>价格尾数分布</strong><p>把收盘价换算到分后，统计最后一位数字 0-9 的占比；tail_concentration 是最高尾数占比，tail_0_5_ratio 是尾数 0 和 5 的合计占比。</p></div>
+<div class="explain-item"><strong>整数价位聚集度</strong><p>round_1_ratio 表示收盘价落在整元的比例，round_01_ratio 表示落在 0.10 元刻度的比例，round_005_ratio 表示落在 0.05 元刻度的比例。</p></div>
+<div class="explain-item"><strong>尾盘价格偏移</strong><p>分别计算收盘价相对 14:30 和 14:55 价格的收益率；mean abs 越高，表示尾盘阶段价格偏移越明显。</p></div>
+<div class="explain-item"><strong>指标摘要表</strong><p>汇总该股票的主要异常指标。它用于解释图中的异常来源，不单独构成交易结论。</p></div>
+</div>
+</section>
+""".strip()
 
 
 def _html_anchor_id(value: str, seen: set[str]) -> str:

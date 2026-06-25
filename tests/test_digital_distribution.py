@@ -16,7 +16,9 @@ from stock_digital_analysis.digital_distribution import (
     create_symbol_dashboard,
     find_stock_dat_file,
     _filter_symbol_options,
+    _overview_explanation_html,
     _resolve_stock_names_from_sina,
+    _symbol_explanation_html,
     _symbol_selector_label,
     stock_symbol_to_quotation_code,
     rank_scan_results,
@@ -253,6 +255,18 @@ def test_stock_scan_dashboard_uses_display_name_and_summary_table():
     assert fig.layout.title.text == "股票数字分布异常检测总览"
     assert fig.data[0].x[0] == "交通银行 (601328.SH)"
     assert fig.data[-1].type == "table"
+
+
+def test_dashboard_explanation_html_describes_metrics_for_clients():
+    overview = _overview_explanation_html()
+    symbol = _symbol_explanation_html()
+
+    assert "统计说明" in overview
+    assert "异常综合分数" in overview
+    assert "核心指标明细表" in overview
+    assert "Benford" in symbol
+    assert "价格尾数分布" in symbol
+    assert "尾盘价格偏移" in symbol
 
 
 def test_symbol_selector_helpers_filter_by_name_and_symbol():
