@@ -108,6 +108,20 @@ In Cloudflare Pages, connect this repository and set the production branch to
 `cloudflare-pages`. No build command is needed because the branch already
 contains `index.html`.
 
+You can also deploy directly from `main`, matching the `OptionSlides` style. The
+repository includes `wrangler.jsonc` with static assets served from `./public`.
+Use this Cloudflare Pages build command:
+
+```bash
+python -m pip install --upgrade pip uv && uv sync --extra test && scripts/build-public-site.sh
+```
+
+Set the output directory to:
+
+```text
+public
+```
+
 ## Notebook Selector
 
 ```python

@@ -7,10 +7,13 @@ on:
       - master
     paths:
       - ".github/workflows/publish-report.yml"
+      - "README.md"
+      - "scripts/**"
       - "src/**"
       - "tests/**"
       - "pyproject.toml"
       - "uv.lock"
+      - "wrangler.jsonc"
   schedule:
     - cron: "30 22 * * *"
 
@@ -49,29 +52,11 @@ jobs:
           python -m pip install --upgrade pip
           uv sync --extra test
 
-      - name: Download DAT files
-        run: |
-          rm -rf datadir
-          if curl --fail --location --retry 3 --retry-delay 2 \
-            --output datadir-manifest.remote.txt \
-            "$DATA_MANIFEST_URL"; then
-            mv datadir-manifest.remote.txt datadir-manifest.txt
-          fi
-          while IFS= read -r relpath; do
-            [ -n "$relpath" ] || continue
-            mkdir -p "datadir/$(dirname "$relpath")"
-            curl --fail --location --retry 3 --retry-delay 2 \
-              --output "datadir/$relpath" \
-              "$DATA_BASE_URL/$relpath"
-          done < datadir-manifest.txt
+      - name: Build static site
+        run: scripts/build-public-site.sh
 
       - name: Run tests
         run: uv run python -m pytest
-
-      - name: Generate static report
-        run: |
-          mkdir -p public
-          uv run stock-write-html datadir -o public/index.html --separate-symbol-pages
 
       - name: Publish static branch
         env:
