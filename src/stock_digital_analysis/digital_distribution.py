@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import urllib.request
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time
@@ -406,6 +407,24 @@ def resolve_stock_names(symbols: Iterable[str]) -> dict[str, str]:
     if not missing_quotation_codes:
         return names
 
+    sina_names = _resolve_stock_names_from_sina(missing_quotation_codes, quotation_to_symbol)
+    if sina_names:
+        names.update(sina_names)
+        _write_stock_names_to_redis(
+            {
+                quotation_code: names[symbol]
+                for quotation_code, symbol in quotation_to_symbol.items()
+                if symbol in sina_names
+            }
+        )
+    missing_quotation_codes = [
+        quotation_code
+        for quotation_code, symbol in quotation_to_symbol.items()
+        if symbol not in names
+    ]
+    if not missing_quotation_codes:
+        return names
+
     try:
         import easyquotation
 
@@ -423,6 +442,37 @@ def resolve_stock_names(symbols: Iterable[str]) -> dict[str, str]:
             names[symbol] = stock_name
             redis_updates[quotation_code] = stock_name
     _write_stock_names_to_redis(redis_updates)
+    return names
+
+
+def _resolve_stock_names_from_sina(
+    quotation_codes: Sequence[str],
+    quotation_to_symbol: dict[str, str],
+) -> dict[str, str]:
+    """Resolve names through Sina's public quote endpoint."""
+    codes = [code for code in quotation_codes if re.fullmatch(r"(sh|sz)\d{6}", code)]
+    if not codes:
+        return {}
+    url = "https://hq.sinajs.cn/list=" + ",".join(codes)
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Referer": "https://finance.sina.com.cn/",
+            "User-Agent": "Mozilla/5.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            text = response.read().decode("gb18030", errors="replace")
+    except Exception:
+        return {}
+
+    names = {}
+    pattern = re.compile(r'var hq_str_((?:sh|sz)\d{6})="([^",]+)')
+    for quotation_code, stock_name in pattern.findall(text):
+        symbol = quotation_to_symbol.get(quotation_code)
+        if symbol and stock_name:
+            names[symbol] = stock_name
     return names
 
 

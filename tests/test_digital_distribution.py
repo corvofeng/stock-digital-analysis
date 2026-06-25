@@ -17,6 +17,7 @@ from stock_digital_analysis.digital_distribution import (
     find_stock_dat_file,
     _filter_symbol_options,
     _resolve_stock_names_from_redis,
+    _resolve_stock_names_from_sina,
     _symbol_selector_label,
     load_stock_names_file,
     stock_symbol_to_quotation_code,
@@ -199,6 +200,38 @@ def test_resolve_stock_names_from_yhtrader_redis_stock_map(monkeypatch):
     )
 
     assert names == {"601328.SH": "交通银行"}
+
+
+def test_resolve_stock_names_from_sina_quote_api(monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return (
+                'var hq_str_sh601328="交通银行,7.630,7.630";\n'
+                'var hq_str_sz000721="西安饮食,9.380,9.420";\n'
+            ).encode("gb18030")
+
+    def fake_urlopen(request, timeout):
+        assert timeout == 3
+        assert request.full_url.endswith("list=sh601328,sz000721")
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "stock_digital_analysis.digital_distribution.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    names = _resolve_stock_names_from_sina(
+        ["sh601328", "sz000721"],
+        {"sh601328": "601328.SH", "sz000721": "000721.SZ"},
+    )
+
+    assert names == {"601328.SH": "交通银行", "000721.SZ": "西安饮食"}
 
 
 def test_load_stock_names_file_supports_stock_and_yhtrader_keys(tmp_path):

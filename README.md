@@ -49,13 +49,16 @@ CLI:
 uv run stock-write-html ../../datadir -o reports/stock-digital-report.html
 uv run stock-write-html ../../datadir -o reports/stock-digital-overview.html --overview-only
 uv run stock-write-html ../../datadir -o reports/stock-digital-report.html --stock-names ../../datadir/stock_names.json
+uv run stock-write-html ../../datadir -o reports/stock-digital-report.html --no-resolve-names
 ```
 
 The HTML report includes a table of contents and collapsible per-symbol
-sections. Stock names are loaded from `data_dir/stock_names.json` by default;
-the mapping accepts both stock symbols such as `601328.SH` and YHTrader /
-easyquotation keys such as `sh601328`. Add `--resolve-names` to fill missing
-names through Redis `stock_map` / Sina when those services are available.
+sections. Stock names are resolved automatically by default: local JSON
+mappings are loaded first when present, then missing names are filled through
+Redis `stock_map` / Sina when those services are available. The optional JSON
+mapping accepts both stock symbols such as `601328.SH` and YHTrader /
+easyquotation keys such as `sh601328`; use it only when you want local
+overrides. Add `--no-resolve-names` for offline-only report generation.
 
 Python:
 
@@ -66,7 +69,7 @@ write_stock_datadir_dashboard_html(
     "reports/stock-digital-report.html",
     "../../datadir",
     include_symbol_dashboards=True,
-    resolve_names=False,
+    resolve_names=True,
 )
 ```
 
@@ -78,7 +81,7 @@ The generated HTML contains the computed tables and Plotly charts, so you can re
 from IPython.display import display
 from stock_digital_analysis.digital_distribution import create_stock_symbol_selector
 
-selector = create_stock_symbol_selector("../../datadir", resolve_names=False)
+selector = create_stock_symbol_selector("../../datadir", resolve_names=True)
 display(selector)
 ```
 

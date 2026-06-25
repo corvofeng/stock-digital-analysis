@@ -40,10 +40,19 @@ def write_html_main() -> int:
         action="store_true",
         help="Only include the aggregate ranking dashboard",
     )
-    parser.add_argument(
+    name_group = parser.add_mutually_exclusive_group()
+    name_group.add_argument(
         "--resolve-names",
+        dest="resolve_names",
         action="store_true",
-        help="Resolve Chinese stock names through easyquotation/Sina",
+        default=True,
+        help="Resolve Chinese stock names through Redis/Sina when possible (default)",
+    )
+    name_group.add_argument(
+        "--no-resolve-names",
+        dest="resolve_names",
+        action="store_false",
+        help="Disable network/API stock-name resolution",
     )
     parser.add_argument(
         "--stock-names",
