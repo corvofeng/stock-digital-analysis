@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
 import urllib.request
 from collections import Counter, defaultdict
@@ -371,7 +370,7 @@ def find_stock_dat_file(data_dir: str | Path, symbol: str) -> Path:
 
 
 def stock_symbol_to_quotation_code(symbol: str) -> str:
-    """Convert `588000.SH` or `SH588000` to an easyquotation/Sina code."""
+    """Convert `588000.SH` or `SH588000` to a Sina quote code."""
     code, exchange = _split_stock_symbol(symbol)
     if not exchange:
         raise ValueError(f"Cannot infer exchange from symbol: {symbol}")
@@ -381,13 +380,7 @@ def stock_symbol_to_quotation_code(symbol: str) -> str:
 
 
 def resolve_stock_names(symbols: Iterable[str]) -> dict[str, str]:
-    """Resolve stock symbols to Chinese security names.
-
-    The lookup follows the YHTrader convention first: Redis hash
-    `stock_map`, keyed by easyquotation codes such as `sh601328`. Missing
-    names fall back to easyquotation/Sina and are written back to Redis when
-    available. Failed lookups are omitted from the returned map.
-    """
+    """Resolve stock symbols to Chinese security names through Sina."""
     unique_symbols = sorted({symbol for symbol in symbols if symbol})
     quotation_to_symbol = {}
     for symbol in unique_symbols:
@@ -398,51 +391,7 @@ def resolve_stock_names(symbols: Iterable[str]) -> dict[str, str]:
     if not quotation_to_symbol:
         return {}
 
-    names = _resolve_stock_names_from_redis(quotation_to_symbol)
-    missing_quotation_codes = [
-        quotation_code
-        for quotation_code, symbol in quotation_to_symbol.items()
-        if symbol not in names
-    ]
-    if not missing_quotation_codes:
-        return names
-
-    sina_names = _resolve_stock_names_from_sina(missing_quotation_codes, quotation_to_symbol)
-    if sina_names:
-        names.update(sina_names)
-        _write_stock_names_to_redis(
-            {
-                quotation_code: names[symbol]
-                for quotation_code, symbol in quotation_to_symbol.items()
-                if symbol in sina_names
-            }
-        )
-    missing_quotation_codes = [
-        quotation_code
-        for quotation_code, symbol in quotation_to_symbol.items()
-        if symbol not in names
-    ]
-    if not missing_quotation_codes:
-        return names
-
-    try:
-        import easyquotation
-
-        quotation = easyquotation.use("sina")
-        snapshot = quotation.real(missing_quotation_codes, prefix=True)
-    except Exception:
-        return names
-
-    redis_updates = {}
-    for quotation_code, item in snapshot.items():
-        symbol = quotation_to_symbol.get(quotation_code)
-        name = item.get("name") if isinstance(item, dict) else None
-        if symbol and name:
-            stock_name = str(name)
-            names[symbol] = stock_name
-            redis_updates[quotation_code] = stock_name
-    _write_stock_names_to_redis(redis_updates)
-    return names
+    return _resolve_stock_names_from_sina(list(quotation_to_symbol), quotation_to_symbol)
 
 
 def _resolve_stock_names_from_sina(
@@ -476,68 +425,13 @@ def _resolve_stock_names_from_sina(
     return names
 
 
-def _stock_name_redis_client():
-    try:
-        import redis
-    except Exception:
-        return None
-
-    redis_url = os.environ.get("REDIS_URL", "redis://192.168.1.1:6379/0")
-    try:
-        client = redis.StrictRedis.from_url(
-            redis_url,
-            encoding="utf8",
-            decode_responses=True,
-            socket_connect_timeout=0.3,
-            socket_timeout=0.5,
-        )
-        client.ping()
-        return client
-    except Exception:
-        return None
-
-
-def _resolve_stock_names_from_redis(
-    quotation_to_symbol: dict[str, str],
-    hash_name: str = "stock_map",
-) -> dict[str, str]:
-    client = _stock_name_redis_client()
-    if client is None:
-        return {}
-    names = {}
-    try:
-        values = client.hmget(hash_name, list(quotation_to_symbol))
-    except Exception:
-        return {}
-    for quotation_code, stock_name in zip(quotation_to_symbol, values):
-        if stock_name:
-            names[quotation_to_symbol[quotation_code]] = str(stock_name)
-    return names
-
-
-def _write_stock_names_to_redis(
-    quotation_names: dict[str, str],
-    hash_name: str = "stock_map",
-) -> None:
-    if not quotation_names:
-        return
-    client = _stock_name_redis_client()
-    if client is None:
-        return
-    try:
-        client.hset(hash_name, mapping=quotation_names)
-    except Exception:
-        return
-
-
 def attach_stock_names(
     rows: Iterable[dict[str, Any]],
-    stock_names: dict[str, str] | None = None,
     resolve_names: bool = True,
 ) -> list[dict[str, Any]]:
     """Return scan rows with `stock_name` and `display_name` fields."""
     output = [dict(row) for row in rows]
-    names = dict(stock_names or {})
+    names = {}
     if resolve_names:
         missing_symbols = [
             row["symbol"]
@@ -552,63 +446,6 @@ def attach_stock_names(
         row["stock_name"] = stock_name
         row["display_name"] = f"{stock_name} ({symbol})" if stock_name else symbol
     return output
-
-
-def load_stock_names_file(path: str | Path) -> dict[str, str]:
-    """Load a local stock-name mapping file.
-
-    The JSON can use stock symbols (`601328.SH`, `SH601328`) or YHTrader /
-    easyquotation keys (`sh601328`). Values are Chinese security names.
-    """
-    mapping_path = Path(path)
-    if not mapping_path.exists():
-        return {}
-    data = json.loads(mapping_path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError(f"Stock-name mapping must be a JSON object: {mapping_path}")
-    names = {}
-    for key, value in data.items():
-        if not value:
-            continue
-        symbol = _stock_name_key_to_stock_symbol(str(key))
-        if symbol:
-            names[symbol] = str(value)
-    return names
-
-
-def load_default_stock_names(data_dir: str | Path) -> dict[str, str]:
-    """Load local stock-name mappings from common project/data locations."""
-    candidates = [
-        Path(data_dir) / "stock_names.json",
-        Path("stock_names.json"),
-        Path("datadir") / "stock_names.json",
-    ]
-    names = {}
-    seen_paths = set()
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved in seen_paths:
-            continue
-        seen_paths.add(resolved)
-        try:
-            names.update(load_stock_names_file(candidate))
-        except FileNotFoundError:
-            continue
-    return names
-
-
-def _stock_name_key_to_stock_symbol(key: str) -> str | None:
-    normalized = key.strip().upper()
-    if not normalized:
-        return None
-    if "." in normalized:
-        code, exchange = _split_stock_symbol(normalized)
-        return f"{code}.{exchange}" if exchange else code
-    if len(normalized) >= 3 and normalized[:2] in {"SH", "SZ"}:
-        return f"{normalized[2:]}.{normalized[:2]}"
-    if len(normalized) >= 3 and normalized[-2:] in {"SH", "SZ"}:
-        return f"{normalized[:-2]}.{normalized[-2:]}"
-    return normalized
 
 
 def bars_to_records(
@@ -848,7 +685,6 @@ def scan_stock_dat_dir(
     adjust: str = "none",
     min_samples: int = 1,
     include_stock_names: bool = False,
-    stock_names: dict[str, str] | None = None,
     resolve_names: bool = True,
 ):
     """Scan a local stock data directory and return a ranked DataFrame."""
@@ -861,7 +697,7 @@ def scan_stock_dat_dir(
         min_samples=min_samples,
     )
     if include_stock_names:
-        rows = attach_stock_names(rows, stock_names=stock_names, resolve_names=resolve_names)
+        rows = attach_stock_names(rows, resolve_names=resolve_names)
     return rank_scan_results(rows)
 
 
@@ -1184,7 +1020,6 @@ def create_stock_symbol_selector(
     end: str | None = None,
     adjust: str = "none",
     min_samples: int = 1,
-    stock_names: dict[str, str] | None = None,
     resolve_names: bool = True,
     max_options: int = 50,
 ):
@@ -1210,7 +1045,6 @@ def create_stock_symbol_selector(
         adjust=adjust,
         min_samples=min_samples,
         include_stock_names=True,
-        stock_names=stock_names,
         resolve_names=resolve_names,
     )
     if ranking.empty:
@@ -1356,7 +1190,6 @@ def write_stock_datadir_dashboard_html(
     adjust: str = "none",
     min_samples: int = 1,
     include_symbol_dashboards: bool = True,
-    stock_names: dict[str, str] | None = None,
     resolve_names: bool = True,
 ) -> Path:
     """Write an HTML report for all SH/SZ DAT files in a stock data directory."""
@@ -1365,9 +1198,6 @@ def write_stock_datadir_dashboard_html(
     import plotly.io as pio
 
     output = Path(output_path)
-    merged_stock_names = load_default_stock_names(data_dir)
-    if stock_names:
-        merged_stock_names.update(stock_names)
     ranking = scan_stock_dat_dir(
         data_dir,
         start=start,
@@ -1375,7 +1205,6 @@ def write_stock_datadir_dashboard_html(
         adjust=adjust,
         min_samples=min_samples,
         include_stock_names=True,
-        stock_names=merged_stock_names,
         resolve_names=resolve_names,
     )
     parts = [

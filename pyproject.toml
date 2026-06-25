@@ -17,10 +17,6 @@ notebook = [
     "ipython>=8.0",
     "ipywidgets>=8.0",
 ]
-names = [
-    "easyquotation==0.7.5",
-    "redis>=4.6",
-]
 test = [
     "pytest>=8.0",
 ]

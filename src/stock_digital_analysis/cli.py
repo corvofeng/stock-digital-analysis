@@ -6,7 +6,6 @@ import argparse
 from pathlib import Path
 
 from stock_digital_analysis.digital_distribution import (
-    load_stock_names_file,
     write_stock_datadir_dashboard_html,
 )
 
@@ -54,14 +53,8 @@ def write_html_main() -> int:
         action="store_false",
         help="Disable network/API stock-name resolution",
     )
-    parser.add_argument(
-        "--stock-names",
-        type=Path,
-        help="JSON stock-name mapping file; defaults include data_dir/stock_names.json",
-    )
     args = parser.parse_args()
 
-    stock_names = load_stock_names_file(args.stock_names) if args.stock_names else None
     output = write_stock_datadir_dashboard_html(
         args.output,
         args.data_dir,
@@ -70,7 +63,6 @@ def write_html_main() -> int:
         adjust=args.adjust,
         min_samples=args.min_samples,
         include_symbol_dashboards=not args.overview_only,
-        stock_names=stock_names,
         resolve_names=args.resolve_names,
     )
     print(output.resolve())

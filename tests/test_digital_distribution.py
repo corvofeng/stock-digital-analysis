@@ -16,10 +16,8 @@ from stock_digital_analysis.digital_distribution import (
     create_symbol_dashboard,
     find_stock_dat_file,
     _filter_symbol_options,
-    _resolve_stock_names_from_redis,
     _resolve_stock_names_from_sina,
     _symbol_selector_label,
-    load_stock_names_file,
     stock_symbol_to_quotation_code,
     rank_scan_results,
     report_to_summary,
@@ -170,36 +168,17 @@ def test_stock_symbol_to_quotation_code_supports_common_formats():
     assert stock_symbol_to_quotation_code("SZ000721") == "sz000721"
 
 
-def test_attach_stock_names_adds_display_name_without_network_lookup():
+def test_attach_stock_names_adds_display_name_from_api_lookup(monkeypatch):
     rows = [{"symbol": "601328.SH", "sample_count": 10}]
-
-    named = attach_stock_names(
-        rows,
-        stock_names={"601328.SH": "交通银行"},
-        resolve_names=False,
+    monkeypatch.setattr(
+        "stock_digital_analysis.digital_distribution.resolve_stock_names",
+        lambda symbols: {"601328.SH": "交通银行"},
     )
+
+    named = attach_stock_names(rows)
 
     assert named[0]["stock_name"] == "交通银行"
     assert named[0]["display_name"] == "交通银行 (601328.SH)"
-
-
-def test_resolve_stock_names_from_yhtrader_redis_stock_map(monkeypatch):
-    class FakeRedis:
-        def hmget(self, hash_name, keys):
-            assert hash_name == "stock_map"
-            assert keys == ["sh601328", "sz000721"]
-            return ["交通银行", None]
-
-    monkeypatch.setattr(
-        "stock_digital_analysis.digital_distribution._stock_name_redis_client",
-        lambda: FakeRedis(),
-    )
-
-    names = _resolve_stock_names_from_redis(
-        {"sh601328": "601328.SH", "sz000721": "000721.SZ"}
-    )
-
-    assert names == {"601328.SH": "交通银行"}
 
 
 def test_resolve_stock_names_from_sina_quote_api(monkeypatch):
@@ -232,19 +211,6 @@ def test_resolve_stock_names_from_sina_quote_api(monkeypatch):
     )
 
     assert names == {"601328.SH": "交通银行", "000721.SZ": "西安饮食"}
-
-
-def test_load_stock_names_file_supports_stock_and_yhtrader_keys(tmp_path):
-    mapping = tmp_path / "stock_names.json"
-    mapping.write_text(
-        '{"601328.SH": "交通银行", "sz301322": "绿通科技"}',
-        encoding="utf-8",
-    )
-
-    assert load_stock_names_file(mapping) == {
-        "601328.SH": "交通银行",
-        "301322.SZ": "绿通科技",
-    }
 
 
 def test_symbol_dashboard_combines_main_metric_panels():

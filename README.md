@@ -48,17 +48,13 @@ CLI:
 ```bash
 uv run stock-write-html ../../datadir -o reports/stock-digital-report.html
 uv run stock-write-html ../../datadir -o reports/stock-digital-overview.html --overview-only
-uv run stock-write-html ../../datadir -o reports/stock-digital-report.html --stock-names ../../datadir/stock_names.json
 uv run stock-write-html ../../datadir -o reports/stock-digital-report.html --no-resolve-names
 ```
 
 The HTML report includes a table of contents and collapsible per-symbol
-sections. Stock names are resolved automatically by default: local JSON
-mappings are loaded first when present, then missing names are filled through
-Redis `stock_map` / Sina when those services are available. The optional JSON
-mapping accepts both stock symbols such as `601328.SH` and YHTrader /
-easyquotation keys such as `sh601328`; use it only when you want local
-overrides. Add `--no-resolve-names` for offline-only report generation.
+sections. Stock names are resolved from Sina's quote API by default each time
+you generate a report, so new DAT files do not require maintaining a local
+mapping file. Add `--no-resolve-names` for offline-only report generation.
 
 Python:
 
