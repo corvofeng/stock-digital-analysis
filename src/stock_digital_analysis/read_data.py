@@ -158,6 +158,16 @@ def infer_symbol(path: Path) -> str:
     return f"{code}.{exchange}" if exchange else code
 
 
+def resolve_input_file(value: Path, data_dir: Path) -> Path:
+    """Resolve a DAT file path or a stock symbol under a data directory."""
+    if value.exists() or value.suffix.upper() == ".DAT":
+        return value
+
+    from stock_digital_analysis.digital_distribution import find_stock_dat_file
+
+    return find_stock_dat_file(data_dir, str(value))
+
+
 def print_analysis(
     report,
     bars: list[Bar] | None = None,
@@ -322,9 +332,20 @@ def _daily_round_clustering(bars: Iterable[Bar]) -> list[dict[str, float | int |
 
 
 def main() -> int:
-    default_file = Path("datadir/SH/60/601328.DAT")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("file", nargs="?", type=Path, default=default_file)
+    parser.add_argument(
+        "input",
+        nargs="?",
+        type=Path,
+        default=Path("601328.SH"),
+        help="DAT file path or stock symbol, e.g. datadir/SH/60/601328.DAT or 601328.SH",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("datadir"),
+        help="Stock data directory used when input is a symbol (default: datadir)",
+    )
     parser.add_argument("--start", help="Start date/time")
     parser.add_argument("--end", help="End date/time")
     parser.add_argument(
@@ -369,14 +390,15 @@ def main() -> int:
 
     start = parse_boundary(args.start) if args.start else None
     end = parse_boundary(args.end, end=True) if args.end else None
+    file_path = resolve_input_file(args.input, args.data_dir)
     # Adjust before filtering so the reference factor is stable for every query range.
-    all_bars = adjust_prices(read_dat(args.file), args.adjust)
+    all_bars = adjust_prices(read_dat(file_path), args.adjust)
     bars = select_bars(all_bars, start, end)
     if not bars:
         print("No matching records.")
         return 1
 
-    print(f"File: {args.file.resolve()}")
+    print(f"File: {file_path.resolve()}")
     print(f"Adjustment: {args.adjust}")
     print(f"Records: {len(bars):,}, range: {bars[0].time} -> {bars[-1].time}")
     if args.tail:
@@ -389,7 +411,7 @@ def main() -> int:
     if args.analyze or args.analysis_json:
         from stock_digital_analysis.digital_distribution import analyze_bars
 
-        report = analyze_bars(args.symbol or infer_symbol(args.file), bars)
+        report = analyze_bars(args.symbol or infer_symbol(file_path), bars)
         if args.analyze:
             print_analysis(
                 report,
