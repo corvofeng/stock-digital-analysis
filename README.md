@@ -74,6 +74,40 @@ write_stock_datadir_dashboard_html(
 
 The generated HTML contains the computed tables and Plotly charts, so you can reopen it later without reconnecting to the notebook kernel.
 
+## Publish With GitHub Actions
+
+The DAT files are intentionally kept outside Git and stored in R2/S3 under:
+
+```bash
+s3://blog/stock/datadir
+```
+
+To refresh the uploaded data from this machine:
+
+```bash
+source ~/.env.r2-blog
+aws s3 sync datadir s3://blog/stock/datadir --delete
+find datadir -type f -name '*.DAT' -printf '%P\n' | sort > datadir-manifest.txt
+aws s3 cp datadir-manifest.txt s3://blog/stock/datadir-manifest.txt
+```
+
+The workflow in `.github/workflows/publish-report.yml` does not need GitHub
+secrets. It downloads the public manifest and each DAT file from the public R2
+URL:
+
+```text
+https://rawforcorvofeng.cn/stock/datadir
+```
+
+Then it runs the tests, writes the static overview to `public/index.html`, writes
+one detail page per stock under `public/symbols/`, and force-pushes those static
+files to the `cloudflare-pages` branch. When you add or remove DAT files, upload
+the refreshed `datadir-manifest.txt` along with the DAT files.
+
+In Cloudflare Pages, connect this repository and set the production branch to
+`cloudflare-pages`. No build command is needed because the branch already
+contains `index.html`.
+
 ## Notebook Selector
 
 ```python

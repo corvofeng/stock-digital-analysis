@@ -1238,6 +1238,7 @@ def write_stock_datadir_dashboard_html(
     min_samples: int = 1,
     include_symbol_dashboards: bool = True,
     resolve_names: bool = True,
+    separate_symbol_pages: bool = False,
 ) -> Path:
     """Write an HTML report for all SH/SZ DAT files in a stock data directory."""
     from html import escape
@@ -1245,6 +1246,7 @@ def write_stock_datadir_dashboard_html(
     import plotly.io as pio
 
     output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
     ranking = scan_stock_dat_dir(
         data_dir,
         start=start,
@@ -1262,27 +1264,7 @@ def write_stock_datadir_dashboard_html(
         "<title>股票数字分布异常检测报告</title>",
         '<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>',
         "<style>",
-        "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;background:#f7f8fa;color:#1f2933;}",
-        ".layout{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:24px;max-width:1680px;margin:0 auto;padding:24px;}",
-        ".sidebar{position:sticky;top:16px;align-self:start;max-height:calc(100vh - 32px);overflow:auto;background:white;border:1px solid #d9e2ec;border-radius:8px;padding:14px;}",
-        ".content{min-width:0;} h1{font-size:26px;margin:0 0 8px;} h2{font-size:20px;margin:0;}",
-        ".meta{color:#52606d;margin-bottom:20px;} .panel{background:white;border:1px solid #d9e2ec;border-radius:8px;padding:16px;margin-bottom:24px;}",
-        ".explain{background:#fbfcfd;border:1px solid #d9e2ec;border-radius:8px;padding:14px 16px;margin:0 0 18px;}",
-        ".explain h2,.explain h3{margin:0 0 10px;font-size:17px;} .explain h3{font-size:15px;}",
-        ".explain-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;}",
-        ".explain-item{border-left:3px solid #627d98;padding-left:10px;} .explain-item strong{display:block;margin-bottom:4px;}",
-        ".explain-item p{margin:0;color:#52606d;font-size:13px;line-height:1.55;}",
-        ".market-panel{background:#fbfcfd;border:1px solid #d9e2ec;border-radius:8px;padding:14px 16px;margin:0 0 18px;}",
-        ".market-panel h3{font-size:15px;margin:0 0 10px;} .chart-box{height:360px;} .score-chart-box{height:160px;margin-top:10px;}",
-        ".monthly-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px;} .monthly-table th,.monthly-table td{border-bottom:1px solid #d9e2ec;padding:7px 8px;text-align:right;}",
-        ".monthly-table th:first-child,.monthly-table td:first-child{text-align:left;} .monthly-table th{color:#334e68;background:#f0f4f8;}",
-        ".toc-title{font-weight:700;margin-bottom:10px;} .toc{display:flex;flex-direction:column;gap:6px;font-size:13px;}",
-        ".toc a{color:#334e68;text-decoration:none;line-height:1.35;} .toc a:hover{text-decoration:underline;}",
-        "details.symbol{background:white;border:1px solid #d9e2ec;border-radius:8px;margin-bottom:14px;overflow:hidden;}",
-        "details.symbol>summary{cursor:pointer;list-style:none;padding:13px 16px;display:flex;justify-content:space-between;gap:16px;align-items:center;border-bottom:1px solid transparent;}",
-        "details.symbol>summary::-webkit-details-marker{display:none;} details.symbol[open]>summary{border-bottom-color:#d9e2ec;}",
-        ".symbol-title{font-weight:700;} .symbol-meta{color:#52606d;font-size:13px;white-space:nowrap;} .symbol-body{padding:16px;}",
-        "@media (max-width: 900px){.layout{grid-template-columns:1fr;padding:14px}.sidebar{position:relative;top:auto;max-height:260px}}",
+        _dashboard_css(),
         "</style>",
         "<script>",
         "document.addEventListener('toggle',function(e){if(e.target.matches('details.symbol[open]')&&window.Plotly){setTimeout(function(){e.target.querySelectorAll('.js-plotly-plot').forEach(function(p){Plotly.Plots.resize(p);});},80);}},true);",
@@ -1297,7 +1279,7 @@ def write_stock_datadir_dashboard_html(
     ]
 
     symbol_rows = []
-    if include_symbol_dashboards and not ranking.empty:
+    if (include_symbol_dashboards or separate_symbol_pages) and not ranking.empty:
         ordered = ranking.sort_values("overall_score", ascending=False)
         seen_ids: set[str] = set()
         for _, row in ordered.iterrows():
@@ -1307,7 +1289,12 @@ def write_stock_datadir_dashboard_html(
             display_name = str(row.get("display_name") or symbol)
             section_id = _html_anchor_id(symbol, seen_ids)
             symbol_rows.append((row, symbol, display_name, section_id))
-            parts.append(f'<a href="#{section_id}">{escape(display_name)}</a>')
+            href = (
+                f"symbols/{escape(_symbol_page_filename(symbol))}"
+                if separate_symbol_pages
+                else f"#{section_id}"
+            )
+            parts.append(f'<a href="{href}">{escape(display_name)}</a>')
 
     parts.extend(
         [
@@ -1327,7 +1314,21 @@ def write_stock_datadir_dashboard_html(
         ]
     )
 
-    if symbol_rows:
+    if separate_symbol_pages and symbol_rows:
+        parts.append(_symbol_links_html(symbol_rows))
+        for row, symbol, display_name, section_id in symbol_rows:
+            _write_stock_symbol_page(
+                output.parent / "symbols" / _symbol_page_filename(symbol),
+                data_dir=data_dir,
+                row=row,
+                symbol=symbol,
+                display_name=display_name,
+                section_id=section_id,
+                start=start,
+                end=end,
+                adjust=adjust,
+            )
+    elif symbol_rows:
         for row, symbol, display_name, section_id in symbol_rows:
             file_path = row.get("file_path") or find_stock_dat_file(data_dir, symbol)
             bars = load_stock_minute_bars(
@@ -1367,9 +1368,129 @@ def write_stock_datadir_dashboard_html(
             )
 
     parts.extend(["</main>", "</div>", "</body>", "</html>"])
-    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(parts), encoding="utf-8")
     return output
+
+
+def _dashboard_css() -> str:
+    return "\n".join(
+        [
+            "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;background:#f7f8fa;color:#1f2933;}",
+            ".layout{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:24px;max-width:1680px;margin:0 auto;padding:24px;}",
+            ".sidebar{position:sticky;top:16px;align-self:start;max-height:calc(100vh - 32px);overflow:auto;background:white;border:1px solid #d9e2ec;border-radius:8px;padding:14px;}",
+            ".content{min-width:0;} h1{font-size:26px;margin:0 0 8px;} h2{font-size:20px;margin:0;}",
+            ".meta{color:#52606d;margin-bottom:20px;} .panel{background:white;border:1px solid #d9e2ec;border-radius:8px;padding:16px;margin-bottom:24px;}",
+            ".explain{background:#fbfcfd;border:1px solid #d9e2ec;border-radius:8px;padding:14px 16px;margin:0 0 18px;}",
+            ".explain h2,.explain h3{margin:0 0 10px;font-size:17px;} .explain h3{font-size:15px;}",
+            ".explain-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;}",
+            ".explain-item{border-left:3px solid #627d98;padding-left:10px;} .explain-item strong{display:block;margin-bottom:4px;}",
+            ".explain-item p{margin:0;color:#52606d;font-size:13px;line-height:1.55;}",
+            ".market-panel{background:#fbfcfd;border:1px solid #d9e2ec;border-radius:8px;padding:14px 16px;margin:0 0 18px;}",
+            ".market-panel h3{font-size:15px;margin:0 0 10px;} .chart-box{height:360px;} .score-chart-box{height:160px;margin-top:10px;}",
+            ".monthly-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px;} .monthly-table th,.monthly-table td{border-bottom:1px solid #d9e2ec;padding:7px 8px;text-align:right;}",
+            ".monthly-table th:first-child,.monthly-table td:first-child{text-align:left;} .monthly-table th{color:#334e68;background:#f0f4f8;}",
+            ".toc-title{font-weight:700;margin-bottom:10px;} .toc{display:flex;flex-direction:column;gap:6px;font-size:13px;}",
+            ".toc a{color:#334e68;text-decoration:none;line-height:1.35;} .toc a:hover{text-decoration:underline;}",
+            ".symbol-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px;}",
+            ".symbol-link{display:flex;justify-content:space-between;gap:12px;color:#1f2933;text-decoration:none;border:1px solid #d9e2ec;border-radius:8px;padding:10px 12px;background:#fbfcfd;}",
+            ".symbol-link:hover{border-color:#627d98;} .symbol-link small{color:#52606d;white-space:nowrap;}",
+            "details.symbol{background:white;border:1px solid #d9e2ec;border-radius:8px;margin-bottom:14px;overflow:hidden;}",
+            "details.symbol>summary{cursor:pointer;list-style:none;padding:13px 16px;display:flex;justify-content:space-between;gap:16px;align-items:center;border-bottom:1px solid transparent;}",
+            "details.symbol>summary::-webkit-details-marker{display:none;} details.symbol[open]>summary{border-bottom-color:#d9e2ec;}",
+            ".symbol-title{font-weight:700;} .symbol-meta{color:#52606d;font-size:13px;white-space:nowrap;} .symbol-body{padding:16px;}",
+            "@media (max-width: 900px){.layout{grid-template-columns:1fr;padding:14px}.sidebar{position:relative;top:auto;max-height:260px}}",
+        ]
+    )
+
+
+def _symbol_links_html(symbol_rows: Sequence[tuple[Any, str, str, str]]) -> str:
+    from html import escape
+
+    links = []
+    for row, symbol, display_name, _section_id in symbol_rows:
+        score = _format_dashboard_value(row.get("overall_score"))
+        samples = _format_dashboard_value(row.get("sample_count"))
+        href = f"symbols/{escape(_symbol_page_filename(symbol))}"
+        links.append(
+            f'<a class="symbol-link" href="{href}"><span>{escape(display_name)}</span>'
+            f"<small>score {escape(score)} · n {escape(samples)}</small></a>"
+        )
+    return f"""
+<section class="panel">
+<h2>单只股票页面</h2>
+<div class="symbol-list">{''.join(links)}</div>
+</section>
+""".strip()
+
+
+def _write_stock_symbol_page(
+    output_path: Path,
+    *,
+    data_dir: str | Path,
+    row: Any,
+    symbol: str,
+    display_name: str,
+    section_id: str,
+    start: str | None,
+    end: str | None,
+    adjust: str,
+) -> Path:
+    from html import escape
+
+    import plotly.io as pio
+
+    file_path = row.get("file_path") or find_stock_dat_file(data_dir, symbol)
+    bars = load_stock_minute_bars(file_path, start=start, end=end, adjust=adjust)
+    report = analyze_bars(symbol, bars)
+    daily_records = daily_ohlc_records(bars)
+    monthly_records = monthly_metric_records(symbol, bars)
+    score = _format_dashboard_value(row.get("overall_score"))
+    samples = _format_dashboard_value(row.get("sample_count"))
+    parts = [
+        "<!doctype html>",
+        "<html>",
+        "<head>",
+        '<meta charset="utf-8">',
+        f"<title>{escape(display_name)} 数字分布异常检测</title>",
+        '<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>',
+        "<style>",
+        _dashboard_css(),
+        "</style>",
+        "</head>",
+        "<body>",
+        '<div class="layout">',
+        '<aside class="sidebar">',
+        '<div class="toc-title">导航</div>',
+        '<nav class="toc">',
+        '<a href="../index.html">总览</a>',
+        f'<a href="#{escape(section_id)}">本股票</a>',
+        "</nav>",
+        "</aside>",
+        '<main class="content">',
+        f'<h1 id="{escape(section_id)}">{escape(display_name)}</h1>',
+        f'<div class="meta">score {escape(score)} · n {escape(samples)} · data_dir: {escape(str(data_dir))}</div>',
+        '<div class="panel">',
+        _symbol_explanation_html(),
+        _tradingview_chart_html(section_id, daily_records, monthly_records),
+        _monthly_metrics_table_html(monthly_records),
+        pio.to_html(
+            create_symbol_dashboard(
+                report,
+                bars=bars,
+                title=f"{display_name} 数字分布异常检测指标总览",
+            ),
+            include_plotlyjs="cdn",
+            full_html=False,
+        ),
+        "</div>",
+        "</main>",
+        "</div>",
+        "</body>",
+        "</html>",
+    ]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(parts), encoding="utf-8")
+    return output_path
 
 
 def _overview_explanation_html() -> str:
@@ -1532,3 +1653,8 @@ def _html_anchor_id(value: str, seen: set[str]) -> str:
         suffix += 1
     seen.add(candidate)
     return candidate
+
+
+def _symbol_page_filename(symbol: str) -> str:
+    safe = re.sub(r"[^0-9A-Za-z._-]+", "-", symbol.strip()).strip("-")
+    return f"{safe or 'symbol'}.html"

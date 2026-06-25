@@ -20,6 +20,7 @@ from stock_digital_analysis.digital_distribution import (
     _overview_explanation_html,
     _resolve_stock_names_from_sina,
     _symbol_explanation_html,
+    _symbol_page_filename,
     _tradingview_chart_html,
     _monthly_metrics_table_html,
     monthly_metric_records,
@@ -330,6 +331,11 @@ def test_tradingview_and_monthly_table_html_include_client_context():
     assert "日 K 线与月度异常分数" in chart_html
     assert "月度异常指标" in table_html
     assert "2026-06" in table_html
+
+
+def test_symbol_page_filename_keeps_symbol_readable_and_safe():
+    assert _symbol_page_filename("601328.SH") == "601328.SH.html"
+    assert _symbol_page_filename("  weird symbol/SZ  ") == "weird-symbol-SZ.html"
 
 
 def test_symbol_selector_helpers_filter_by_name_and_symbol():

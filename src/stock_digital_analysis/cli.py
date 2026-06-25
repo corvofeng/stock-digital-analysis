@@ -39,6 +39,11 @@ def write_html_main() -> int:
         action="store_true",
         help="Only include the aggregate ranking dashboard",
     )
+    parser.add_argument(
+        "--separate-symbol-pages",
+        action="store_true",
+        help="Write one symbols/<symbol>.html page per stock and link them from the overview",
+    )
     name_group = parser.add_mutually_exclusive_group()
     name_group.add_argument(
         "--resolve-names",
@@ -64,6 +69,7 @@ def write_html_main() -> int:
         min_samples=args.min_samples,
         include_symbol_dashboards=not args.overview_only,
         resolve_names=args.resolve_names,
+        separate_symbol_pages=args.separate_symbol_pages,
     )
     print(output.resolve())
     return 0
