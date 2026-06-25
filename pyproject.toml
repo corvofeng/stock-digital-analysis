@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stock-digital-analysis"
+version = "0.1.0"
+description = "Standalone stock digital distribution analysis for local DAT files and HTML reports."
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=2.0",
+    "plotly>=5.0",
+]
+
+[project.optional-dependencies]
+notebook = [
+    "ipython>=8.0",
+    "ipywidgets>=8.0",
+]
+names = [
+    "easyquotation==0.7.5",
+    "redis>=4.6",
+]
+test = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+stock-read-dat = "stock_digital_analysis.read_data:main"
+stock-write-html = "stock_digital_analysis.cli:write_html_main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q --tb=short"

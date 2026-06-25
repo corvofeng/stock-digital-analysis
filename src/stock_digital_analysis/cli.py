@@ -1,0 +1,68 @@
+"""Command line entry points for stock digital analysis reports."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from stock_digital_analysis.digital_distribution import (
+    load_stock_names_file,
+    write_stock_datadir_dashboard_html,
+)
+
+
+def write_html_main() -> int:
+    parser = argparse.ArgumentParser(description="Write a stock DAT directory HTML report.")
+    parser.add_argument("data_dir", type=Path, help="stock data directory, e.g. datadir")
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=Path("reports/stock-digital-report.html"),
+        help="Output HTML path",
+    )
+    parser.add_argument("--start", help="Start date/time")
+    parser.add_argument("--end", help="End date/time")
+    parser.add_argument(
+        "--adjust",
+        choices=("none", "front-ratio", "back-ratio"),
+        default="none",
+        help="Ratio price adjustment using the factor stored in DAT files",
+    )
+    parser.add_argument(
+        "--min-samples",
+        type=int,
+        default=1,
+        help="Minimum selected bars required to include a symbol",
+    )
+    parser.add_argument(
+        "--overview-only",
+        action="store_true",
+        help="Only include the aggregate ranking dashboard",
+    )
+    parser.add_argument(
+        "--resolve-names",
+        action="store_true",
+        help="Resolve Chinese stock names through easyquotation/Sina",
+    )
+    parser.add_argument(
+        "--stock-names",
+        type=Path,
+        help="JSON stock-name mapping file; defaults include data_dir/stock_names.json",
+    )
+    args = parser.parse_args()
+
+    stock_names = load_stock_names_file(args.stock_names) if args.stock_names else None
+    output = write_stock_datadir_dashboard_html(
+        args.output,
+        args.data_dir,
+        start=args.start,
+        end=args.end,
+        adjust=args.adjust,
+        min_samples=args.min_samples,
+        include_symbol_dashboards=not args.overview_only,
+        stock_names=stock_names,
+        resolve_names=args.resolve_names,
+    )
+    print(output.resolve())
+    return 0
