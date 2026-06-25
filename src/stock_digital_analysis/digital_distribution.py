@@ -572,6 +572,51 @@ def close_tail_dataframe(report: DigitalDistributionReport):
     return pd.DataFrame(asdict(item) for item in report.close_tail.offsets)
 
 
+def daily_ohlc_records(bars: Iterable[MarketBar]) -> list[dict[str, Any]]:
+    """Aggregate minute bars into TradingView-compatible daily K-line records."""
+    by_day: dict[date, list[MarketBar]] = defaultdict(list)
+    for bar in bars:
+        by_day[getattr(bar, "time").date()].append(bar)
+
+    records = []
+    for trade_date, day_bars in sorted(by_day.items()):
+        ordered = sorted(day_bars, key=lambda item: getattr(item, "time"))
+        if not ordered:
+            continue
+        records.append(
+            {
+                "time": trade_date.isoformat(),
+                "open": float(ordered[0].open),
+                "high": max(float(bar.high) for bar in ordered),
+                "low": min(float(bar.low) for bar in ordered),
+                "close": float(ordered[-1].close),
+                "volume": sum(int(getattr(bar, "volume_shares", 0)) for bar in ordered),
+            }
+        )
+    return records
+
+
+def monthly_metric_records(symbol: str, bars: Iterable[MarketBar]) -> list[dict[str, Any]]:
+    """Calculate per-month digital-distribution metrics and a monthly anomaly score."""
+    by_month: dict[str, list[MarketBar]] = defaultdict(list)
+    for bar in bars:
+        by_month[getattr(bar, "time").strftime("%Y-%m")].append(bar)
+
+    rows = []
+    for month, month_bars in sorted(by_month.items()):
+        report = analyze_bars(symbol, month_bars)
+        row = report_to_summary(report)
+        row["month"] = month
+        row["month_time"] = f"{month}-01"
+        rows.append(row)
+    if not rows:
+        return []
+
+    ranked = rank_scan_results(rows, score_col="monthly_anomaly_score")
+    ranked = ranked.sort_values("month")
+    return ranked.to_dict("records")
+
+
 def analyze_stock_dat(
     file_path: str | Path,
     start: str | None = None,
@@ -993,6 +1038,8 @@ def create_symbol_dashboard(
 def _format_dashboard_value(value: Any) -> str:
     if value is None:
         return "-"
+    if isinstance(value, float) and math.isnan(value):
+        return "-"
     if isinstance(value, int):
         return f"{value:,}"
     if isinstance(value, float):
@@ -1213,6 +1260,7 @@ def write_stock_datadir_dashboard_html(
         "<head>",
         '<meta charset="utf-8">',
         "<title>股票数字分布异常检测报告</title>",
+        '<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>',
         "<style>",
         "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;background:#f7f8fa;color:#1f2933;}",
         ".layout{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:24px;max-width:1680px;margin:0 auto;padding:24px;}",
@@ -1224,6 +1272,10 @@ def write_stock_datadir_dashboard_html(
         ".explain-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;}",
         ".explain-item{border-left:3px solid #627d98;padding-left:10px;} .explain-item strong{display:block;margin-bottom:4px;}",
         ".explain-item p{margin:0;color:#52606d;font-size:13px;line-height:1.55;}",
+        ".market-panel{background:#fbfcfd;border:1px solid #d9e2ec;border-radius:8px;padding:14px 16px;margin:0 0 18px;}",
+        ".market-panel h3{font-size:15px;margin:0 0 10px;} .chart-box{height:360px;} .score-chart-box{height:160px;margin-top:10px;}",
+        ".monthly-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px;} .monthly-table th,.monthly-table td{border-bottom:1px solid #d9e2ec;padding:7px 8px;text-align:right;}",
+        ".monthly-table th:first-child,.monthly-table td:first-child{text-align:left;} .monthly-table th{color:#334e68;background:#f0f4f8;}",
         ".toc-title{font-weight:700;margin-bottom:10px;} .toc{display:flex;flex-direction:column;gap:6px;font-size:13px;}",
         ".toc a{color:#334e68;text-decoration:none;line-height:1.35;} .toc a:hover{text-decoration:underline;}",
         "details.symbol{background:white;border:1px solid #d9e2ec;border-radius:8px;margin-bottom:14px;overflow:hidden;}",
@@ -1285,6 +1337,8 @@ def write_stock_datadir_dashboard_html(
                 adjust=adjust,
             )
             report = analyze_bars(symbol, bars)
+            daily_records = daily_ohlc_records(bars)
+            monthly_records = monthly_metric_records(symbol, bars)
             score = _format_dashboard_value(row.get("overall_score"))
             samples = _format_dashboard_value(row.get("sample_count"))
             parts.extend(
@@ -1296,6 +1350,8 @@ def write_stock_datadir_dashboard_html(
                     "</summary>",
                     '<div class="symbol-body">',
                     _symbol_explanation_html(),
+                    _tradingview_chart_html(section_id, daily_records, monthly_records),
+                    _monthly_metrics_table_html(monthly_records),
                     pio.to_html(
                         create_symbol_dashboard(
                             report,
@@ -1340,6 +1396,129 @@ def _symbol_explanation_html() -> str:
 <div class="explain-item"><strong>尾盘价格偏移</strong><p>分别计算收盘价相对 14:30 和 14:55 价格的收益率；mean abs 越高，表示尾盘阶段价格偏移越明显。</p></div>
 <div class="explain-item"><strong>指标摘要表</strong><p>汇总该股票的主要异常指标。它用于解释图中的异常来源，不单独构成交易结论。</p></div>
 </div>
+</section>
+""".strip()
+
+
+def _tradingview_chart_html(
+    section_id: str,
+    daily_records: Sequence[dict[str, Any]],
+    monthly_records: Sequence[dict[str, Any]],
+) -> str:
+    from html import escape
+
+    chart_id = f"{section_id}-kline"
+    score_id = f"{section_id}-monthly-score"
+    candle_data = [
+        {
+            "time": row["time"],
+            "open": row["open"],
+            "high": row["high"],
+            "low": row["low"],
+            "close": row["close"],
+        }
+        for row in daily_records
+    ]
+    score_data = [
+        {
+            "time": row["month_time"],
+            "value": float(row.get("monthly_anomaly_score") or 0),
+            "color": "#d64545" if float(row.get("monthly_anomaly_score") or 0) >= 1 else "#627d98",
+        }
+        for row in monthly_records
+    ]
+    return f"""
+<section class="market-panel">
+<h3>日 K 线与月度异常分数</h3>
+<div id="{escape(chart_id)}" class="chart-box"></div>
+<div id="{escape(score_id)}" class="score-chart-box"></div>
+<script>
+(function() {{
+  var candles = {json.dumps(candle_data, ensure_ascii=False)};
+  var scores = {json.dumps(score_data, ensure_ascii=False)};
+  function draw() {{
+    if (!window.LightweightCharts || !candles.length) {{ return; }}
+    var candleEl = document.getElementById({json.dumps(chart_id)});
+    var scoreEl = document.getElementById({json.dumps(score_id)});
+    if (!candleEl || candleEl.dataset.rendered === "1") {{ return; }}
+    if (!candleEl.clientWidth) {{ return; }}
+    candleEl.dataset.rendered = "1";
+    var candleChart = LightweightCharts.createChart(candleEl, {{
+      height: 360,
+      layout: {{ background: {{ color: "#fbfcfd" }}, textColor: "#334e68" }},
+      grid: {{ vertLines: {{ color: "#e6edf3" }}, horzLines: {{ color: "#e6edf3" }} }},
+      rightPriceScale: {{ borderColor: "#d9e2ec" }},
+      timeScale: {{ borderColor: "#d9e2ec" }}
+    }});
+    candleChart.addCandlestickSeries({{
+      upColor: "#0f9f6e",
+      downColor: "#d64545",
+      borderUpColor: "#0f9f6e",
+      borderDownColor: "#d64545",
+      wickUpColor: "#0f9f6e",
+      wickDownColor: "#d64545"
+    }}).setData(candles);
+    candleChart.timeScale().fitContent();
+    if (scoreEl && scores.length) {{
+      var scoreChart = LightweightCharts.createChart(scoreEl, {{
+        height: 160,
+        layout: {{ background: {{ color: "#fbfcfd" }}, textColor: "#334e68" }},
+        grid: {{ vertLines: {{ color: "#e6edf3" }}, horzLines: {{ color: "#e6edf3" }} }},
+        rightPriceScale: {{ borderColor: "#d9e2ec" }},
+        timeScale: {{ borderColor: "#d9e2ec" }}
+      }});
+      scoreChart.addHistogramSeries({{
+        priceFormat: {{ type: "price", precision: 3, minMove: 0.001 }},
+        color: "#627d98"
+      }}).setData(scores);
+      scoreChart.timeScale().fitContent();
+    }}
+  }}
+  draw();
+  window.addEventListener("resize", draw);
+  document.addEventListener("toggle", function(event) {{
+    var candleEl = document.getElementById({json.dumps(chart_id)});
+    if (event.target && candleEl && event.target.contains(candleEl)) {{
+      setTimeout(draw, 80);
+    }}
+  }}, true);
+}})();
+</script>
+</section>
+""".strip()
+
+
+def _monthly_metrics_table_html(monthly_records: Sequence[dict[str, Any]]) -> str:
+    from html import escape
+
+    if not monthly_records:
+        return ""
+    columns = [
+        ("month", "月份"),
+        ("sample_count", "样本数"),
+        ("monthly_anomaly_score", "月度异常分数"),
+        ("benford_amount_score", "成交额Benford"),
+        ("benford_volume_score", "成交量Benford"),
+        ("tail_concentration", "尾数集中度"),
+        ("tail_0_5_ratio", "0/5尾数占比"),
+        ("round_01_ratio", "0.10刻度占比"),
+        ("close_tail_anomaly_score", "尾盘偏移"),
+    ]
+    header = "".join(f"<th>{escape(label)}</th>" for _, label in columns)
+    rows = []
+    for row in monthly_records:
+        cells = "".join(
+            f"<td>{escape(_format_dashboard_value(row.get(key)))}</td>"
+            for key, _ in columns
+        )
+        rows.append(f"<tr>{cells}</tr>")
+    return f"""
+<section class="market-panel">
+<h3>月度异常指标</h3>
+<table class="monthly-table">
+<thead><tr>{header}</tr></thead>
+<tbody>{''.join(rows)}</tbody>
+</table>
 </section>
 """.strip()
 

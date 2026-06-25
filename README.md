@@ -54,7 +54,10 @@ uv run stock-write-html datadir -o reports/stock-digital-report.html --no-resolv
 The HTML report includes a table of contents and collapsible per-symbol
 sections. Stock names are resolved from Sina's quote API by default each time
 you generate a report, so new DAT files do not require maintaining a local
-mapping file. Add `--no-resolve-names` for offline-only report generation.
+mapping file. Each symbol section includes a TradingView Lightweight Charts
+daily K-line view, monthly anomaly scores, and monthly metric tables so clients
+can compare anomalies with price movement by month. Add `--no-resolve-names`
+for offline-only report generation.
 
 Python:
 

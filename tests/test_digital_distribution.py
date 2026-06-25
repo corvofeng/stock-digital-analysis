@@ -14,11 +14,15 @@ from stock_digital_analysis.digital_distribution import (
     create_benford_figure,
     create_stock_scan_dashboard,
     create_symbol_dashboard,
+    daily_ohlc_records,
     find_stock_dat_file,
     _filter_symbol_options,
     _overview_explanation_html,
     _resolve_stock_names_from_sina,
     _symbol_explanation_html,
+    _tradingview_chart_html,
+    _monthly_metrics_table_html,
+    monthly_metric_records,
     _symbol_selector_label,
     stock_symbol_to_quotation_code,
     rank_scan_results,
@@ -148,6 +152,37 @@ def test_colab_helpers_flatten_records_summary_and_ranking():
     assert "overall_score" in ranking.columns
 
 
+def test_daily_ohlc_records_aggregate_minute_bars_by_day():
+    bars = [
+        sample_bar(datetime(2026, 6, 22, 9, 30, tzinfo=CHINA_TZ), 10.0, 100, 1000),
+        sample_bar(datetime(2026, 6, 22, 15, 0, tzinfo=CHINA_TZ), 10.5, 200, 2100),
+        sample_bar(datetime(2026, 6, 23, 15, 0, tzinfo=CHINA_TZ), 9.5, 300, 2850),
+    ]
+
+    records = daily_ohlc_records(bars)
+
+    assert records[0]["time"] == "2026-06-22"
+    assert records[0]["open"] == 10.0
+    assert records[0]["close"] == 10.5
+    assert records[0]["volume"] == 300
+    assert records[1]["time"] == "2026-06-23"
+
+
+def test_monthly_metric_records_include_monthly_anomaly_score():
+    bars = [
+        sample_bar(datetime(2026, 5, 29, 14, 30, tzinfo=CHINA_TZ), 10.0, 100, 1000),
+        sample_bar(datetime(2026, 5, 29, 15, 0, tzinfo=CHINA_TZ), 10.5, 200, 2100),
+        sample_bar(datetime(2026, 6, 22, 14, 30, tzinfo=CHINA_TZ), 20.0, 500, 10000),
+        sample_bar(datetime(2026, 6, 22, 15, 0, tzinfo=CHINA_TZ), 19.0, 700, 13300),
+    ]
+
+    records = monthly_metric_records("TEST.SH", bars)
+
+    assert [row["month"] for row in records] == ["2026-05", "2026-06"]
+    assert "monthly_anomaly_score" in records[0]
+    assert records[0]["month_time"] == "2026-05-01"
+
+
 def test_plotly_helper_returns_figure_without_showing():
     result = benford_test([10, 20, 30])
     fig = create_benford_figure(result, "test")
@@ -267,6 +302,34 @@ def test_dashboard_explanation_html_describes_metrics_for_clients():
     assert "Benford" in symbol
     assert "价格尾数分布" in symbol
     assert "尾盘价格偏移" in symbol
+
+
+def test_tradingview_and_monthly_table_html_include_client_context():
+    monthly = [
+        {
+            "month": "2026-06",
+            "month_time": "2026-06-01",
+            "sample_count": 2,
+            "monthly_anomaly_score": 1.25,
+            "benford_amount_score": 0.1,
+            "benford_volume_score": 0.2,
+            "tail_concentration": 0.3,
+            "tail_0_5_ratio": 0.4,
+            "round_01_ratio": 0.5,
+            "close_tail_anomaly_score": 0.6,
+        }
+    ]
+    chart_html = _tradingview_chart_html(
+        "symbol-test",
+        [{"time": "2026-06-22", "open": 10, "high": 11, "low": 9, "close": 10.5}],
+        monthly,
+    )
+    table_html = _monthly_metrics_table_html(monthly)
+
+    assert "LightweightCharts" in chart_html
+    assert "日 K 线与月度异常分数" in chart_html
+    assert "月度异常指标" in table_html
+    assert "2026-06" in table_html
 
 
 def test_symbol_selector_helpers_filter_by_name_and_symbol():
