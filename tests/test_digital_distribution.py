@@ -14,6 +14,7 @@ from stock_digital_analysis.digital_distribution import (
     create_benford_figure,
     create_stock_scan_dashboard,
     create_symbol_dashboard,
+    daily_metric_records,
     daily_ohlc_records,
     find_stock_dat_file,
     _filter_symbol_options,
@@ -184,6 +185,20 @@ def test_monthly_metric_records_include_monthly_anomaly_score():
     assert records[0]["month_time"] == "2026-05-01"
 
 
+def test_daily_metric_records_include_daily_anomaly_score():
+    bars = [
+        sample_bar(datetime(2026, 6, 22, 14, 30, tzinfo=CHINA_TZ), 10.0, 100, 1000),
+        sample_bar(datetime(2026, 6, 22, 15, 0, tzinfo=CHINA_TZ), 10.5, 200, 2100),
+        sample_bar(datetime(2026, 6, 23, 14, 30, tzinfo=CHINA_TZ), 20.0, 500, 10000),
+        sample_bar(datetime(2026, 6, 23, 15, 0, tzinfo=CHINA_TZ), 19.0, 700, 13300),
+    ]
+
+    records = daily_metric_records("TEST.SH", bars)
+
+    assert [row["date"] for row in records] == ["2026-06-22", "2026-06-23"]
+    assert "daily_anomaly_score" in records[0]
+
+
 def test_plotly_helper_returns_figure_without_showing():
     result = benford_test([10, 20, 30])
     fig = create_benford_figure(result, "test")
@@ -306,6 +321,13 @@ def test_dashboard_explanation_html_describes_metrics_for_clients():
 
 
 def test_tradingview_and_monthly_table_html_include_client_context():
+    daily_scores = [
+        {
+            "date": "2026-06-22",
+            "sample_count": 2,
+            "daily_anomaly_score": 1.25,
+        }
+    ]
     monthly = [
         {
             "month": "2026-06",
@@ -323,12 +345,15 @@ def test_tradingview_and_monthly_table_html_include_client_context():
     chart_html = _tradingview_chart_html(
         "symbol-test",
         [{"time": "2026-06-22", "open": 10, "high": 11, "low": 9, "close": 10.5}],
-        monthly,
+        daily_scores,
     )
     table_html = _monthly_metrics_table_html(monthly)
 
     assert "LightweightCharts" in chart_html
-    assert "日 K 线与月度异常分数" in chart_html
+    assert "日 K 线与日异常分数" in chart_html
+    assert "addLineSeries" in chart_html
+    assert "2026-06-22" in chart_html
+    assert "每个交易日的 60 秒 bar 单独计算" in chart_html
     assert "月度异常指标" in table_html
     assert "2026-06" in table_html
 

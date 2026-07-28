@@ -617,6 +617,26 @@ def monthly_metric_records(symbol: str, bars: Iterable[MarketBar]) -> list[dict[
     return ranked.to_dict("records")
 
 
+def daily_metric_records(symbol: str, bars: Iterable[MarketBar]) -> list[dict[str, Any]]:
+    """Calculate per-day digital-distribution metrics and a daily anomaly score."""
+    by_day: dict[date, list[MarketBar]] = defaultdict(list)
+    for bar in bars:
+        by_day[getattr(bar, "time").date()].append(bar)
+
+    rows = []
+    for trade_date, day_bars in sorted(by_day.items()):
+        report = analyze_bars(symbol, day_bars)
+        row = report_to_summary(report)
+        row["date"] = trade_date.isoformat()
+        rows.append(row)
+    if not rows:
+        return []
+
+    ranked = rank_scan_results(rows, score_col="daily_anomaly_score")
+    ranked = ranked.sort_values("date")
+    return ranked.to_dict("records")
+
+
 def analyze_stock_dat(
     file_path: str | Path,
     start: str | None = None,
@@ -1339,6 +1359,7 @@ def write_stock_datadir_dashboard_html(
             )
             report = analyze_bars(symbol, bars)
             daily_records = daily_ohlc_records(bars)
+            daily_score_records = daily_metric_records(symbol, bars)
             monthly_records = monthly_metric_records(symbol, bars)
             score = _format_dashboard_value(row.get("overall_score"))
             samples = _format_dashboard_value(row.get("sample_count"))
@@ -1351,7 +1372,11 @@ def write_stock_datadir_dashboard_html(
                     "</summary>",
                     '<div class="symbol-body">',
                     _symbol_explanation_html(),
-                    _tradingview_chart_html(section_id, daily_records, monthly_records),
+                    _tradingview_chart_html(
+                        section_id,
+                        daily_records,
+                        daily_score_records,
+                    ),
                     _monthly_metrics_table_html(monthly_records),
                     pio.to_html(
                         create_symbol_dashboard(
@@ -1387,6 +1412,7 @@ def _dashboard_css() -> str:
             ".explain-item p{margin:0;color:#52606d;font-size:13px;line-height:1.55;}",
             ".market-panel{background:#fbfcfd;border:1px solid #d9e2ec;border-radius:8px;padding:14px 16px;margin:0 0 18px;}",
             ".market-panel h3{font-size:15px;margin:0 0 10px;} .chart-box{height:360px;} .score-chart-box{height:160px;margin-top:10px;}",
+            ".chart-hint{margin:-2px 0 10px;color:#52606d;font-size:12px;line-height:1.55;}",
             ".monthly-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px;} .monthly-table th,.monthly-table td{border-bottom:1px solid #d9e2ec;padding:7px 8px;text-align:right;}",
             ".monthly-table th:first-child,.monthly-table td:first-child{text-align:left;} .monthly-table th{color:#334e68;background:#f0f4f8;}",
             ".toc-title{font-weight:700;margin-bottom:10px;} .toc{display:flex;flex-direction:column;gap:6px;font-size:13px;}",
@@ -1443,6 +1469,7 @@ def _write_stock_symbol_page(
     bars = load_stock_minute_bars(file_path, start=start, end=end, adjust=adjust)
     report = analyze_bars(symbol, bars)
     daily_records = daily_ohlc_records(bars)
+    daily_score_records = daily_metric_records(symbol, bars)
     monthly_records = monthly_metric_records(symbol, bars)
     score = _format_dashboard_value(row.get("overall_score"))
     samples = _format_dashboard_value(row.get("sample_count"))
@@ -1471,7 +1498,7 @@ def _write_stock_symbol_page(
         f'<div class="meta">score {escape(score)} · n {escape(samples)} · data_dir: {escape(str(data_dir))}</div>',
         '<div class="panel">',
         _symbol_explanation_html(),
-        _tradingview_chart_html(section_id, daily_records, monthly_records),
+        _tradingview_chart_html(section_id, daily_records, daily_score_records),
         _monthly_metrics_table_html(monthly_records),
         pio.to_html(
             create_symbol_dashboard(
@@ -1524,12 +1551,13 @@ def _symbol_explanation_html() -> str:
 def _tradingview_chart_html(
     section_id: str,
     daily_records: Sequence[dict[str, Any]],
-    monthly_records: Sequence[dict[str, Any]],
+    daily_score_records: Sequence[dict[str, Any]],
 ) -> str:
     from html import escape
 
     chart_id = f"{section_id}-kline"
     score_id = f"{section_id}-monthly-score"
+    hint_id = f"{section_id}-monthly-score-hint"
     candle_data = [
         {
             "time": row["time"],
@@ -1541,16 +1569,14 @@ def _tradingview_chart_html(
         for row in daily_records
     ]
     score_data = [
-        {
-            "time": row["month_time"],
-            "value": float(row.get("monthly_anomaly_score") or 0),
-            "color": "#d64545" if float(row.get("monthly_anomaly_score") or 0) >= 1 else "#627d98",
-        }
-        for row in monthly_records
+        {"time": row["date"], "value": float(row.get("daily_anomaly_score") or 0)}
+        for row in daily_score_records
+        if row.get("date")
     ]
     return f"""
 <section class="market-panel">
-<h3>日 K 线与月度异常分数</h3>
+<h3>日 K 线与日异常分数</h3>
+<p id="{escape(hint_id)}" class="chart-hint">日异常分数按每个交易日的 60 秒 bar 单独计算，再对该股票所有交易日的核心指标做 z-score 综合；分数越高，表示当天数字分布相对该股票其他交易日越异常。虚线 1.0 可作为相对异常参考线，高于该线时建议结合下方月度指标表定位来源。</p>
 <div id="{escape(chart_id)}" class="chart-box"></div>
 <div id="{escape(score_id)}" class="score-chart-box"></div>
 <script>
@@ -1588,10 +1614,21 @@ def _tradingview_chart_html(
         rightPriceScale: {{ borderColor: "#d9e2ec" }},
         timeScale: {{ borderColor: "#d9e2ec" }}
       }});
-      scoreChart.addHistogramSeries({{
+      var scoreSeries = scoreChart.addLineSeries({{
         priceFormat: {{ type: "price", precision: 3, minMove: 0.001 }},
-        color: "#627d98"
-      }}).setData(scores);
+        color: "#d64545",
+        lineWidth: 2,
+        title: "日异常分数"
+      }});
+      scoreSeries.setData(scores);
+      scoreSeries.createPriceLine({{
+        price: 1,
+        color: "#9aa5b1",
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "参考线 1.0"
+      }});
       scoreChart.timeScale().fitContent();
     }}
   }}
